@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from models import get_db, Category, SparePart, Sale
@@ -10,6 +10,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # -------------------------
@@ -18,7 +19,6 @@ app.add_middleware(
 @app.get("/")
 def home():
     return {"message": "Ismail Auto Spares API is running 🚗"}
-
 
 # -------------------------
 # CATEGORY ROUTES
@@ -34,28 +34,12 @@ def create_category(category: CategorySchema, db=Depends(get_db)):
     new_cat = Category(name=category.name)
     db.add(new_cat)
     db.commit()
-    return {"message": "Category created successfully"}
+    db.refresh(new_cat)
+    return new_cat  # return the created category with ID
 
-@app.get("/category")
+@app.get("/categories")  # <-- changed to match frontend
 def get_categories(db=Depends(get_db)):
     return db.query(Category).all()
-
-# DELETE route to remove a category
-@app.delete("/category/{category_id}")
-def delete_category(category_id: int, db=Depends(get_db)):
-    category = db.query(Category).filter(Category.id == category_id).first()
-    if not category:
-        return {"message": f"Category ID {category_id} does not exist"}
-    
-    # Optional: prevent deletion if there are spare parts linked
-    linked_parts = db.query(SparePart).filter(SparePart.category_id == category_id).all()
-    if linked_parts:
-        return {"message": f"Cannot delete Category ID {category_id} because it has spare parts linked"}
-
-    db.delete(category)
-    db.commit()
-    return {"message": f"Category ID {category_id} deleted successfully"}
-
 
 # -------------------------
 # SPARE PART ROUTES
@@ -66,7 +50,7 @@ class SparePartSchema(BaseModel):
     stock: int
     category_id: int
 
-@app.post("/sparepart")
+@app.post("/part")  # <-- changed to match frontend
 def create_spare_part(part: SparePartSchema, db=Depends(get_db)):
     new_part = SparePart(
         name=part.name,
@@ -76,46 +60,48 @@ def create_spare_part(part: SparePartSchema, db=Depends(get_db)):
     )
     db.add(new_part)
     db.commit()
-    return {"message": "Spare part added successfully"}
+    db.refresh(new_part)
+    return new_part
 
-@app.get("/sparepart")
+@app.get("/parts")  # <-- changed to match frontend
 def get_spare_parts(db=Depends(get_db)):
-    return db.query(SparePart).all()
-
-# PATCH route to update category of a spare part
-@app.patch("/sparepart/{sparepart_id}/category")
-def update_spare_part_category(sparepart_id: int, new_category_id: int, db=Depends(get_db)):
-    part = db.query(SparePart).filter(SparePart.id == sparepart_id).first()
-    if not part:
-        raise HTTPException(status_code=404, detail=f"Spare part ID {sparepart_id} not found")
-    
-    category = db.query(Category).filter(Category.id == new_category_id).first()
-    if not category:
-        raise HTTPException(status_code=404, detail=f"Category ID {new_category_id} not found")
-    
-    part.category_id = new_category_id
-    db.commit()
-    
-    return {"message": f"Spare part ID {sparepart_id} updated to Category ID {new_category_id}"}
-
+    parts = db.query(SparePart).all()
+    # Include category name in response for frontend
+    result = []
+    for p in parts:
+        result.append({
+            "id": p.id,
+            "name": p.name,
+            "category": p.category.name if p.category else "Unknown"
+        })
+    return result
 
 # -------------------------
 # SALE ROUTES
 # -------------------------
 class SaleSchema(BaseModel):
-    spare_part_id: int
-    quantity: int
+    part_id: int  # match frontend
+    qty: int      # match frontend
 
 @app.post("/sale")
 def create_sale(sale: SaleSchema, db=Depends(get_db)):
     new_sale = Sale(
-        spare_part_id=sale.spare_part_id,
-        quantity=sale.quantity
+        spare_part_id=sale.part_id,
+        quantity=sale.qty
     )
     db.add(new_sale)
     db.commit()
-    return {"message": "Sale recorded successfully"}
+    db.refresh(new_sale)
+    return new_sale
 
-@app.get("/sale")
+@app.get("/sales")  # <-- changed to match frontend
 def get_sales(db=Depends(get_db)):
-    return db.query(Sale).all()
+    sales = db.query(Sale).all()
+    result = []
+    for s in sales:
+        result.append({
+            "id": s.id,
+            "part_id": s.spare_part_id,
+            "qty": s.quantity
+        })
+    return result
